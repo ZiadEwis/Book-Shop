@@ -1,0 +1,433 @@
+-- ============================================
+-- Order Processing System SQL Queries
+-- This file contains all SQL queries used in the system
+-- Functions are defined here as pure SQL
+-- ============================================
+
+-- ============================================
+-- ADMIN OPERATIONS
+-- ============================================
+
+-- --------------------------------------------
+-- 1. Add New Book
+-- Parameters: isbn, title, publisher_id, publication_year, price, category, stock_quantity, threshold, author_names (comma-separated)
+-- --------------------------------------------
+-- INSERT INTO Books (isbn, title, publisher_id, publication_year, price, category, stock_quantity, threshold)
+-- VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+-- 
+-- For each author:
+--   - Check if author exists: SELECT author_id FROM Authors WHERE name = ?
+--   - If not exists: INSERT INTO Authors (name) VALUES (?)
+--   - Link book to author: INSERT INTO BookAuthors (book_isbn, author_id) VALUES (?, ?)
+
+-- --------------------------------------------
+-- 2. Update Book Details
+-- Parameters: isbn (to find book), then any fields to update
+-- --------------------------------------------
+-- UPDATE Books
+-- SET title = ?, publication_year = ?, price = ?, category = ?
+-- WHERE isbn = ?;
+
+-- --------------------------------------------
+-- 3. Update Book Stock Quantity
+-- Parameters: isbn, quantity_change (positive or negative)
+-- Note: Trigger will prevent negative stock and auto-create orders if needed
+-- --------------------------------------------
+-- UPDATE Books
+-- SET stock_quantity = stock_quantity + ?
+-- WHERE isbn = ?;
+
+-- --------------------------------------------
+-- 4. Place Order to Publisher (Manual)
+-- Parameters: book_isbn, quantity
+-- Note: This is manual placement. Auto-placement happens via trigger
+-- --------------------------------------------
+-- INSERT INTO Orders (book_isbn, publisher_id, quantity, status)
+-- SELECT isbn, publisher_id, ?, 'Pending'
+-- FROM Books
+-- WHERE isbn = ?;
+
+-- --------------------------------------------
+-- 5. Confirm Order
+-- Parameters: order_id
+-- Note: Trigger will automatically update stock when status changes to Confirmed
+-- --------------------------------------------
+-- UPDATE Orders
+-- SET status = 'Confirmed', confirmed_date = CURRENT_TIMESTAMP
+-- WHERE order_id = ? AND status = 'Pending';
+
+-- --------------------------------------------
+-- 6. Report: Total Sales for Previous Month
+-- Returns: total_sales
+-- --------------------------------------------
+-- SELECT COALESCE(SUM(total_amount), 0) AS total_sales
+-- FROM SalesTransactions
+-- WHERE YEAR(transaction_date) = YEAR(DATE_SUB(CURRENT_DATE, INTERVAL 1 MONTH))
+--   AND MONTH(transaction_date) = MONTH(DATE_SUB(CURRENT_DATE, INTERVAL 1 MONTH));
+
+-- --------------------------------------------
+-- 7. Report: Total Sales for Specific Day
+-- Parameters: date (YYYY-MM-DD)
+-- Returns: total_sales
+-- --------------------------------------------
+-- SELECT COALESCE(SUM(total_amount), 0) AS total_sales
+-- FROM SalesTransactions
+-- WHERE DATE(transaction_date) = ?;
+
+-- --------------------------------------------
+-- 8. Report: Top 5 Customers (Last 3 Months)
+-- Returns: customer_id, username, first_name, last_name, email, total_spent
+-- --------------------------------------------
+-- SELECT 
+--     c.customer_id,
+--     c.username,
+--     c.first_name,
+--     c.last_name,
+--     c.email,
+--     COALESCE(SUM(st.total_amount), 0) AS total_spent
+-- FROM Customers c
+-- LEFT JOIN SalesTransactions st ON c.customer_id = st.customer_id
+--     AND st.transaction_date >= DATE_SUB(CURRENT_DATE, INTERVAL 3 MONTH)
+-- GROUP BY c.customer_id, c.username, c.first_name, c.last_name, c.email
+-- ORDER BY total_spent DESC
+-- LIMIT 5;
+
+-- --------------------------------------------
+-- 9. Report: Top 10 Selling Books (Last 3 Months)
+-- Returns: isbn, title, category, total_copies_sold
+-- --------------------------------------------
+-- SELECT 
+--     b.isbn,
+--     b.title,
+--     b.category,
+--     COALESCE(SUM(si.quantity), 0) AS total_copies_sold
+-- FROM Books b
+-- LEFT JOIN SalesItems si ON b.isbn = si.book_isbn
+-- LEFT JOIN SalesTransactions st ON si.transaction_id = st.transaction_id
+--     AND st.transaction_date >= DATE_SUB(CURRENT_DATE, INTERVAL 3 MONTH)
+-- GROUP BY b.isbn, b.title, b.category
+-- ORDER BY total_copies_sold DESC
+-- LIMIT 10;
+
+-- --------------------------------------------
+-- 10. Report: Total Number of Times Book Ordered
+-- Parameters: isbn
+-- Returns: order_count
+-- --------------------------------------------
+-- SELECT COUNT(*) AS order_count
+-- FROM Orders
+-- WHERE book_isbn = ?;
+
+-- ============================================
+-- CUSTOMER OPERATIONS
+-- ============================================
+
+-- --------------------------------------------
+-- 11. Customer Registration
+-- Parameters: username, password, first_name, last_name, email, phone, shipping_address
+-- Note: Password should be hashed before storing (implementation detail)
+-- --------------------------------------------
+-- INSERT INTO Customers (username, password, first_name, last_name, email, phone, shipping_address)
+-- VALUES (?, ?, ?, ?, ?, ?, ?);
+
+-- --------------------------------------------
+-- 12. Customer Login
+-- Parameters: username, password
+-- Returns: customer_id, username, first_name, last_name, email, phone, shipping_address
+-- Note: Password verification should happen in application (implementation detail)
+-- --------------------------------------------
+-- SELECT customer_id, username, password, first_name, last_name, email, phone, shipping_address
+-- FROM Customers
+-- WHERE username = ?;
+
+-- --------------------------------------------
+-- 13. Update Customer Profile
+-- Parameters: customer_id, fields to update (password, first_name, last_name, email, phone, shipping_address)
+-- --------------------------------------------
+-- UPDATE Customers
+-- SET first_name = ?, last_name = ?, email = ?, phone = ?, shipping_address = ?
+-- WHERE customer_id = ?;
+
+-- --------------------------------------------
+-- 14. Update Customer Password
+-- Parameters: customer_id, new_password
+-- Note: Password should be hashed before storing (implementation detail)
+-- --------------------------------------------
+-- UPDATE Customers
+-- SET password = ?
+-- WHERE customer_id = ?;
+
+-- --------------------------------------------
+-- 15. Add Item to Shopping Cart
+-- Parameters: customer_id, book_isbn, quantity
+-- Note: If item already exists, update quantity
+-- --------------------------------------------
+-- INSERT INTO ShoppingCart (customer_id, book_isbn, quantity)
+-- VALUES (?, ?, ?)
+-- ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity);
+
+-- --------------------------------------------
+-- 16. View Shopping Cart
+-- Parameters: customer_id
+-- Returns: cart_id, book_isbn, title, price, quantity, subtotal
+-- --------------------------------------------
+-- SELECT 
+--     sc.cart_id,
+--     sc.book_isbn,
+--     b.title,
+--     b.price,
+--     sc.quantity,
+--     (b.price * sc.quantity) AS subtotal
+-- FROM ShoppingCart sc
+-- JOIN Books b ON sc.book_isbn = b.isbn
+-- WHERE sc.customer_id = ?;
+
+-- --------------------------------------------
+-- 17. Get Cart Total
+-- Parameters: customer_id
+-- Returns: total_amount, item_count
+-- --------------------------------------------
+-- SELECT 
+--     COALESCE(SUM(b.price * sc.quantity), 0) AS total_amount,
+--     COALESCE(SUM(sc.quantity), 0) AS item_count
+-- FROM ShoppingCart sc
+-- JOIN Books b ON sc.book_isbn = b.isbn
+-- WHERE sc.customer_id = ?;
+
+-- --------------------------------------------
+-- 18. Remove Item from Cart
+-- Parameters: cart_id
+-- --------------------------------------------
+-- DELETE FROM ShoppingCart
+-- WHERE cart_id = ?;
+
+-- --------------------------------------------
+-- 19. Update Cart Item Quantity
+-- Parameters: cart_id, quantity
+-- --------------------------------------------
+-- UPDATE ShoppingCart
+-- SET quantity = ?
+-- WHERE cart_id = ?;
+
+-- --------------------------------------------
+-- 20. Checkout Shopping Cart
+-- Parameters: customer_id, credit_card_number, credit_card_expiry
+-- Note: This is a multi-step transaction
+-- --------------------------------------------
+-- START TRANSACTION;
+-- 
+-- Step 1: Validate cart is not empty
+-- SELECT COUNT(*) FROM ShoppingCart WHERE customer_id = ?;
+-- 
+-- Step 2: Calculate total
+-- SELECT SUM(b.price * sc.quantity) AS total_amount
+-- FROM ShoppingCart sc
+-- JOIN Books b ON sc.book_isbn = b.isbn
+-- WHERE sc.customer_id = ?;
+-- 
+-- Step 3: Validate credit card expiry date
+-- -- Check if expiry date > current date (YYYY-MM format)
+-- 
+-- Step 4: Check stock availability for all items
+-- SELECT sc.book_isbn, sc.quantity, b.stock_quantity, b.title
+-- FROM ShoppingCart sc
+-- JOIN Books b ON sc.book_isbn = b.isbn
+-- WHERE sc.customer_id = ? AND b.stock_quantity < sc.quantity;
+-- -- If any rows returned, abort with error
+-- 
+-- Step 5: Create sales transaction
+-- INSERT INTO SalesTransactions (customer_id, total_amount, credit_card_number, credit_card_expiry)
+-- VALUES (?, ?, ?, ?);
+-- 
+-- Step 6: Get transaction_id
+-- SET @transaction_id = LAST_INSERT_ID();
+-- 
+-- Step 7: Create sales items from cart
+-- INSERT INTO SalesItems (transaction_id, book_isbn, quantity, price_at_purchase)
+-- SELECT @transaction_id, sc.book_isbn, sc.quantity, b.price
+-- FROM ShoppingCart sc
+-- JOIN Books b ON sc.book_isbn = b.isbn
+-- WHERE sc.customer_id = ?;
+-- 
+-- Step 8: Update book stock
+-- UPDATE Books b
+-- JOIN ShoppingCart sc ON b.isbn = sc.book_isbn
+-- SET b.stock_quantity = b.stock_quantity - sc.quantity
+-- WHERE sc.customer_id = ?;
+-- 
+-- Step 9: Clear shopping cart
+-- DELETE FROM ShoppingCart WHERE customer_id = ?;
+-- 
+-- COMMIT;
+
+-- --------------------------------------------
+-- 21. View Customer Order History
+-- Parameters: customer_id
+-- Returns: transaction_id, transaction_date, total_amount, item details
+-- --------------------------------------------
+-- SELECT 
+--     st.transaction_id,
+--     st.transaction_date,
+--     st.total_amount,
+--     si.book_isbn,
+--     b.title,
+--     si.quantity,
+--     si.price_at_purchase,
+--     (si.quantity * si.price_at_purchase) AS subtotal
+-- FROM SalesTransactions st
+-- JOIN SalesItems si ON st.transaction_id = si.transaction_id
+-- JOIN Books b ON si.book_isbn = b.isbn
+-- WHERE st.customer_id = ?
+-- ORDER BY st.transaction_date DESC, st.transaction_id;
+
+-- --------------------------------------------
+-- 22. Clear Shopping Cart (on Logout)
+-- Parameters: customer_id
+-- --------------------------------------------
+-- DELETE FROM ShoppingCart WHERE customer_id = ?;
+
+-- ============================================
+-- SHARED OPERATIONS (Admin & Customer)
+-- ============================================
+
+-- --------------------------------------------
+-- 23. Search Book by ISBN
+-- Parameters: isbn
+-- --------------------------------------------
+-- SELECT 
+--     b.isbn,
+--     b.title,
+--     b.publication_year,
+--     b.price,
+--     b.category,
+--     b.stock_quantity,
+--     p.name AS publisher_name,
+--     GROUP_CONCAT(a.name SEPARATOR ', ') AS authors
+-- FROM Books b
+-- JOIN Publishers p ON b.publisher_id = p.publisher_id
+-- LEFT JOIN BookAuthors ba ON b.isbn = ba.book_isbn
+-- LEFT JOIN Authors a ON ba.author_id = a.author_id
+-- WHERE b.isbn = ?
+-- GROUP BY b.isbn, b.title, b.publication_year, b.price, b.category, b.stock_quantity, p.name;
+
+-- --------------------------------------------
+-- 24. Search Books by Title
+-- Parameters: title (partial match)
+-- --------------------------------------------
+-- SELECT 
+--     b.isbn,
+--     b.title,
+--     b.publication_year,
+--     b.price,
+--     b.category,
+--     b.stock_quantity,
+--     p.name AS publisher_name,
+--     GROUP_CONCAT(a.name SEPARATOR ', ') AS authors
+-- FROM Books b
+-- JOIN Publishers p ON b.publisher_id = p.publisher_id
+-- LEFT JOIN BookAuthors ba ON b.isbn = ba.book_isbn
+-- LEFT JOIN Authors a ON ba.author_id = a.author_id
+-- WHERE b.title LIKE CONCAT('%', ?, '%')
+-- GROUP BY b.isbn, b.title, b.publication_year, b.price, b.category, b.stock_quantity, p.name;
+
+-- --------------------------------------------
+-- 25. Search Books by Category
+-- Parameters: category
+-- --------------------------------------------
+-- SELECT 
+--     b.isbn,
+--     b.title,
+--     b.publication_year,
+--     b.price,
+--     b.category,
+--     b.stock_quantity,
+--     p.name AS publisher_name,
+--     GROUP_CONCAT(a.name SEPARATOR ', ') AS authors
+-- FROM Books b
+-- JOIN Publishers p ON b.publisher_id = p.publisher_id
+-- LEFT JOIN BookAuthors ba ON b.isbn = ba.book_isbn
+-- LEFT JOIN Authors a ON ba.author_id = a.author_id
+-- WHERE b.category = ?
+-- GROUP BY b.isbn, b.title, b.publication_year, b.price, b.category, b.stock_quantity, p.name;
+
+-- --------------------------------------------
+-- 26. Search Books by Author
+-- Parameters: author_name (partial match)
+-- --------------------------------------------
+-- SELECT 
+--     b.isbn,
+--     b.title,
+--     b.publication_year,
+--     b.price,
+--     b.category,
+--     b.stock_quantity,
+--     p.name AS publisher_name,
+--     GROUP_CONCAT(a.name SEPARATOR ', ') AS authors
+-- FROM Books b
+-- JOIN Publishers p ON b.publisher_id = p.publisher_id
+-- JOIN BookAuthors ba ON b.isbn = ba.book_isbn
+-- JOIN Authors a ON ba.author_id = a.author_id
+-- WHERE a.name LIKE CONCAT('%', ?, '%')
+-- GROUP BY b.isbn, b.title, b.publication_year, b.price, b.category, b.stock_quantity, p.name;
+
+-- --------------------------------------------
+-- 27. Search Books by Publisher
+-- Parameters: publisher_name (partial match)
+-- --------------------------------------------
+-- SELECT 
+--     b.isbn,
+--     b.title,
+--     b.publication_year,
+--     b.price,
+--     b.category,
+--     b.stock_quantity,
+--     p.name AS publisher_name,
+--     GROUP_CONCAT(a.name SEPARATOR ', ') AS authors
+-- FROM Books b
+-- JOIN Publishers p ON b.publisher_id = p.publisher_id
+-- LEFT JOIN BookAuthors ba ON b.isbn = ba.book_isbn
+-- LEFT JOIN Authors a ON ba.author_id = a.author_id
+-- WHERE p.name LIKE CONCAT('%', ?, '%')
+-- GROUP BY b.isbn, b.title, b.publication_year, b.price, b.category, b.stock_quantity, p.name;
+
+-- --------------------------------------------
+-- 28. Get All Publishers
+-- Returns: List of all publishers
+-- --------------------------------------------
+-- SELECT publisher_id, name, address, phone
+-- FROM Publishers
+-- ORDER BY name;
+
+-- --------------------------------------------
+-- 29. Get All Categories
+-- Returns: Distinct list of book categories
+-- --------------------------------------------
+-- SELECT DISTINCT category
+-- FROM Books
+-- ORDER BY category;
+
+-- --------------------------------------------
+-- 30. Get Book with Full Details
+-- Parameters: isbn
+-- Returns: Complete book information including authors and publisher
+-- --------------------------------------------
+-- SELECT 
+--     b.isbn,
+--     b.title,
+--     b.publication_year,
+--     b.price,
+--     b.category,
+--     b.stock_quantity,
+--     b.threshold,
+--     p.publisher_id,
+--     p.name AS publisher_name,
+--     p.address AS publisher_address,
+--     p.phone AS publisher_phone,
+--     GROUP_CONCAT(CONCAT(a.author_id, ':', a.name) SEPARATOR '|') AS authors
+-- FROM Books b
+-- JOIN Publishers p ON b.publisher_id = p.publisher_id
+-- LEFT JOIN BookAuthors ba ON b.isbn = ba.book_isbn
+-- LEFT JOIN Authors a ON ba.author_id = a.author_id
+-- WHERE b.isbn = ?
+-- GROUP BY b.isbn, b.title, b.publication_year, b.price, b.category, b.stock_quantity, b.threshold, 
+--          p.publisher_id, p.name, p.address, p.phone;
